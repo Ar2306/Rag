@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atlas</title>
+<style>
+  :root {
+    --bg: #0b0d10; --panel: #111418; --panel2: #161a20; --line: #232830; --text: #e6e9ee; --muted: #8b93a1;
+    --accent: #3ddc97; --accent2: #6aa7ff; --warn: #ffb454; --danger: #ff6b6b;
+    --dense: #6aa7ff; --bm25: #ffb454; --graph: #d58cff;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, "Inter", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 var(--sans); display: grid; grid-template-rows: 48px 1fr; }
+  a { color: var(--accent2); }
+  button, select, input, textarea { font: inherit; color: inherit; }
+  button { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); color: #062; border-color: transparent; font-weight: 600; }
+  button.primary:disabled { opacity: .5; cursor: default; }
+  input, textarea, select { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; width: 100%; }
+  textarea { resize: none; }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  .muted { color: var(--muted); }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 11px; font-family: var(--mono); border: 1px solid var(--line); color: var(--muted); }
+  .pill.ok { color: var(--accent); border-color: rgba(61,220,151,.4); }
+  .pill.bad { color: var(--danger); border-color: rgba(255,107,107,.4); }
+
+  header { display: flex; align-items: center; gap: 14px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 15px; margin: 0; letter-spacing: .04em; }
+  header h1 span { color: var(--accent); }
+  header .status { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+
+  main { display: grid; grid-template-columns: 280px 1fr 380px; min-height: 0; }
+  aside, section.right { background: var(--panel); border-right: 1px solid var(--line); overflow: auto; }
+  section.right { border-right: 0; border-left: 1px solid var(--line); display: flex; flex-direction: column; }
+  .box { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .box h3 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+
+  #drop { border: 1px dashed var(--line); border-radius: 8px; padding: 18px 10px; text-align: center; color: var(--muted); cursor: pointer; }
+  #drop.over { border-color: var(--accent); color: var(--accent); }
+  .row { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+  .row label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .doc { display: flex; align-items: center; gap: 8px; padding: 7px 6px; border-radius: 6px; cursor: pointer; }
+  .doc:hover { background: var(--panel2); }
+  .doc .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .doc .del { opacity: 0; color: var(--danger); background: none; border: 0; padding: 0 4px; }
+  .doc:hover .del { opacity: 1; }
+  .progress { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 6px; white-space: pre-wrap; }
+  .bar { height: 3px; background: var(--line); border-radius: 2px; margin-top: 4px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s; }
+
+  .chat { display: flex; flex-direction: column; min-height: 0; }
+  #thread { flex: 1; overflow: auto; padding: 24px 32px; }
+  .msg { max-width: 820px; margin: 0 auto 22px; }
+  .msg.user .bubble { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; display: inline-block; }
+  .msg.assistant .bubble { white-space: pre-wrap; line-height: 1.65; }
+  .msg .meta { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 8px; }
+  .msg.assistant .bubble b { color: #fff; }
+  .msg.assistant .bubble code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; font-family: var(--mono); font-size: 12.5px; }
+  .cite { display: inline-block; font-family: var(--mono); font-size: 10.5px; background: rgba(61,220,151,.14); color: var(--accent); border-radius: 4px; padding: 0 5px; margin: 0 2px; cursor: pointer; vertical-align: super; line-height: 1.4; }
+  .cite:hover { background: rgba(61,220,151,.3); }
+  .cursor::after { content: "▍"; color: var(--accent); animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .composer { padding: 14px 32px 18px; border-top: 1px solid var(--line); background: var(--panel); }
+  .composer .inner { max-width: 820px; margin: 0 auto; }
+  .composer textarea { height: 64px; }
+  .composer .row { justify-content: space-between; }
+  .composer .row > div { display: flex; gap: 8px; align-items: center; }
+  .composer select { width: auto; }
+  .empty { text-align: center; color: var(--muted); margin-top: 18vh; }
+  .empty h2 { font-weight: 500; color: var(--text); }
+  .empty code { font-family: var(--mono); background: var(--panel2); padding: 2px 6px; border-radius: 4px; }
+
+  .tabs { display: flex; border-bottom: 1px solid var(--line); }
+  .tabs button { flex: 1; border: 0; border-radius: 0; background: none; padding: 10px; color: var(--muted); border-bottom: 2px solid transparent; }
+  .tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+  .tab { display: none; padding: 12px 14px; overflow: auto; flex: 1; }
+  .tab.on { display: block; }
+  .hit { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; background: var(--panel2); transition: border-color .2s; }
+  .hit.cited { border-color: var(--accent); }
+  .hit .top { display: flex; gap: 6px; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .hit .n { color: var(--accent); font-weight: 700; }
+  .hit .src { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+  .arm { padding: 0 5px; border-radius: 3px; font-size: 10px; }
+  .arm.dense { background: rgba(106,167,255,.18); color: var(--dense); }
+  .arm.bm25 { background: rgba(255,180,84,.18); color: var(--bm25); }
+  .arm.graph { background: rgba(213,140,255,.18); color: var(--graph); }
+  .lvl { padding: 0 5px; border-radius: 3px; font-size: 10px; background: rgba(255,255,255,.08); }
+  .hit .ctx { font-size: 12px; color: var(--accent2); margin: 6px 0 2px; font-style: italic; }
+  .hit .txt { font-size: 12.5px; color: #c9cfd8; max-height: 96px; overflow: hidden; position: relative; margin-top: 6px; white-space: pre-wrap; }
+  .hit .txt.open { max-height: none; }
+  .hit .txt:not(.open)::after { content: ""; position: absolute; inset: auto 0 0; height: 30px; background: linear-gradient(transparent, var(--panel2)); }
+  .hit .quote { font-size: 12px; color: var(--accent); margin-top: 6px; border-left: 2px solid var(--accent); padding-left: 8px; }
+
+  .stage { display: grid; grid-template-columns: 74px 1fr 64px; gap: 8px; align-items: center; font-family: var(--mono); font-size: 11.5px; margin-bottom: 7px; }
+  .stage .track { height: 10px; background: var(--line); border-radius: 3px; position: relative; }
+  .stage .track i { position: absolute; top: 0; bottom: 0; border-radius: 3px; background: var(--accent2); }
+  .stage.llm .track i { background: var(--accent); }
+  .stage .v { text-align: right; color: var(--muted); }
+  .kv { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-family: var(--mono); font-size: 11.5px; margin-top: 12px; }
+  .kv span:nth-child(even) { text-align: right; color: var(--muted); }
+
+  #graph { width: 100%; height: 100%; min-height: 420px; display: block; }
+  .tree { font-family: var(--mono); font-size: 11.5px; }
+  .tree .node { padding: 4px 0 4px 0; border-bottom: 1px solid var(--line); }
+  .tree .node.l2 { color: var(--accent); }
+  .tree .node.l1 { color: var(--accent2); padding-left: 12px; }
+  .tree .node.l0 { color: var(--muted); padding-left: 24px; }
+  .tree .node .s { color: #c9cfd8; display: block; font-family: var(--sans); font-size: 12px; white-space: pre-wrap; margin-top: 2px; }
+  @media (max-width: 1100px) { main { grid-template-columns: 240px 1fr; } section.right { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1><span>◆</span> ATLAS</h1>
+  <span class="muted mono">hybrid · rrf · graph · rerank · cited</span>
+  <div class="status" id="status"></div>
+</header>
+
+<main>
+  <aside>
+    <div class="box">
+      <h3>Upload</h3>
+      <div id="drop">drop files here<br><span class="mono">pdf · md · txt · code</span></div>
+      <input id="file" type="file" multiple hidden>
+      <div class="row"><input id="url" placeholder="https://… (page or PDF)" class="mono"><button id="urlgo">Ingest</button></div>
+      <div class="row"><label><input type="checkbox" id="enrich" checked style="width:auto;margin-right:6px">enrich (context + graph + summaries)</label></div>
+      <div class="progress" id="prog"></div>
+    </div>
+    <div class="box">
+      <h3>Connect a database</h3>
+      <input id="sqlurl" placeholder="sqlite:///data/example.db  ·  postgresql+psycopg://…" class="mono">
+      <div class="row"><input id="sqlq" placeholder="SELECT title, body FROM articles" class="mono"></div>
+      <div class="row"><input id="sqlname" placeholder="name (e.g. articles)"><button id="sqlgo">Ingest</button></div>
+    </div>
+    <div class="box">
+      <h3>Documents <span id="ndocs" class="muted"></span> <span id="scopehint" class="muted" style="float:right;text-transform:none;letter-spacing:0"></span></h3>
+      <div id="docs"></div>
+    </div>
+    <div class="box" id="treebox" hidden>
+      <h3>Hierarchy · <span id="treename" class="muted"></span></h3>
+      <div class="tree" id="tree"></div>
+    </div>
+  </aside>
+
+  <section class="chat">
+    <div id="thread">
+      <div class="empty" id="empty">
+        <h2>Ask your documents.</h2>
+        <p>Upload files or connect a database on the left. Every answer streams with exact citations,<br>and the right panel shows what was retrieved, why, and how long each stage took.</p>
+        <p class="muted mono">bge-small · BM25 · RRF k=60 · entity graph · MiniLM cross-encoder · claude</p>
+      </div>
+    </div>
+    <div class="composer">
+      <div class="inner">
+        <textarea id="q" placeholder="Ask a question…  (Enter to send, Shift+Enter for newline)"></textarea>
+        <div class="row">
+          <div>
+            <label>mode</label>
+            <select id="mode">
+              <option value="full">full (hybrid + graph + rerank)</option>
+              <option value="hybrid+rerank">hybrid + rerank</option>
+              <option value="hybrid">hybrid (RRF only)</option>
+              <option value="dense">dense only</option>
+              <option value="bm25">BM25 only</option>
+            </select>
+            <label>k</label><input id="k" type="number" value="8" min="1" max="20" style="width:64px">
+          </div>
+          <div><button id="clear">clear</button><button id="send" class="primary">Ask</button></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="right">
+    <div class="tabs">
+      <button class="on" data-tab="sources">Sources</button>
+      <button data-tab="timing">Timing</button>
+      <button data-tab="graph">Graph</button>
+    </div>
+    <div class="tab on" id="sources"><p class="muted">Retrieved passages appear here.</p></div>
+    <div class="tab" id="timing"><p class="muted">Per-stage latency appears here.</p></div>
+    <div class="tab" id="graph"><canvas id="graphc"></canvas></div>
+  </section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const history = [];
+let hits = [];
+
+// ---- SSE over fetch (EventSource can't POST) --------------------------------
+async function* sse(res) {
+  const rd = res.body.getReader(), dec = new TextDecoder(); let buf = '';
+  for (;;) {
+    const { value, done } = await rd.read(); if (done) return;
+    buf += dec.decode(value, { stream: true });
+    let i; while ((i = buf.indexOf('\n\n')) >= 0) {
+      const line = buf.slice(0, i); buf = buf.slice(i + 2);
+      if (line.startsWith('data: ')) yield JSON.parse(line.slice(6));
+    }
+  }
+}
+
+// ---- status + docs ----------------------------------------------------------
+async function refresh() {
+  const h = await (await fetch('/health')).json();
+  $('#status').innerHTML = `<span class="pill">${h.nodes} nodes</span><span class="pill">${h.docs} docs</span>
+    <span class="pill ${h.api_key ? 'ok' : 'bad'}">${h.api_key ? h.models.answer : 'no API key'}</span>`;
+  const docs = await (await fetch('/documents')).json();
+  $('#ndocs').textContent = docs.length ? `(${docs.length})` : '';
+  $('#docs').innerHTML = docs.map(d => `<div class="doc" data-id="${d.doc_id}" title="${esc(d.source)}">
+      <input type="checkbox" class="scope" title="search only selected docs" style="width:auto;margin:0">
+      <span class="name">${esc(d.source)}</span>
+      <span class="mono muted">${d.chunks}c${d.sections ? ' · ' + d.sections + 's' : ''}${d.edges ? ' · ' + d.edges + 'e' : ''}</span>
+      <button class="del" title="delete">×</button></div>`).join('') || '<span class="muted">none yet</span>';
+}
+const scoped = () => [...document.querySelectorAll('.scope:checked')].map(c => c.closest('.doc').dataset.id);
+$('#docs').onchange = () => { const n = scoped().length; $('#scopehint').textContent = n ? `scoped to ${n}` : ''; };
+$('#docs').onclick = async e => {
+  const el = e.target.closest('.doc'); if (!el || e.target.classList.contains('scope')) return;
+  if (e.target.classList.contains('del')) { await fetch('/documents/' + el.dataset.id, { method: 'DELETE' }); return refresh(); }
+  const tree = await (await fetch(`/documents/${el.dataset.id}/tree`)).json();
+  $('#treebox').hidden = false; $('#treename').textContent = el.title;
+  $('#tree').innerHTML = tree.map(n => `<div class="node l${n.level}">${n.level === 2 ? '◆ document' : n.level === 1 ? '§ ' + esc(n.heading || 'section') : '· chunk ' + n.ordinal}
+      ${n.level ? `<span class="s">${esc(n.text)}</span>` : ''}</div>`).join('');
+  showGraph(el.dataset.id);
+  setTab('graph');
+};
+
+// ---- ingest -----------------------------------------------------------------
+async function ingestStream(res, label) {
+  const prog = $('#prog'); let bar = null;
+  for await (const ev of sse(res)) {
+    const f = ev.file || label;
+    if (ev.stage === 'loaded') prog.textContent = `${f}: loaded ${ev.chars.toLocaleString()} chars`;
+    else if (ev.stage === 'chunked') prog.innerHTML = `${esc(f)}: ${ev.chunks} chunks · ${ev.sections} sections<div class="bar"><i></i></div>`, bar = prog.querySelector('.bar i');
+    else if (ev.stage === 'enriching' || ev.stage === 'summarizing') { prog.firstChild.textContent = `${f}: ${ev.stage} ${ev.done}/${ev.total}`; if (bar) bar.style.width = (100 * ev.done / ev.total) + '%'; }
+    else if (ev.stage === 'done') {
+      const u = ev.usage, cost = (u.input * 1 + u.cache_write * 1.25 + u.cache_read * 0.1 + u.output * 5) / 1e6;
+      prog.textContent = `${f}: ${ev.nodes} nodes · ${ev.edges} graph edges${ev.enriched ? ` · $${cost.toFixed(3)} (cache hit ${Math.round(100 * u.cache_read / Math.max(1, u.cache_read + u.input + u.cache_write))}%)` : ' · not enriched'}`;
+      refresh();
+    } else if (ev.stage === 'error') prog.textContent = `${f}: ✗ ${ev.error}`;
+  }
+}
+async function upload(files) {
+  if (!files.length) return;
+  const fd = new FormData(); for (const f of files) fd.append('files', f); fd.append('enrich', $('#enrich').checked);
+  await ingestStream(await fetch('/ingest', { method: 'POST', body: fd }), 'upload');
+}
+$('#drop').onclick = () => $('#file').click();
+$('#file').onchange = e => upload(e.target.files);
+$('#drop').ondragover = e => { e.preventDefault(); $('#drop').classList.add('over'); };
+$('#drop').ondragleave = () => $('#drop').classList.remove('over');
+$('#drop').ondrop = e => { e.preventDefault(); $('#drop').classList.remove('over'); upload(e.dataTransfer.files); };
+$('#urlgo').onclick = async () => {
+  const body = { url: $('#url').value.trim(), enrich: $('#enrich').checked }; if (!body.url) return;
+  const res = await fetch('/ingest/url', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  if (!res.ok) { $('#prog').textContent = '✗ ' + (await res.json()).detail; return; }
+  await ingestStream(res, body.url); $('#url').value = '';
+};
+$('#sqlgo').onclick = async () => {
+  const body = { url: $('#sqlurl').value, query: $('#sqlq').value, name: $('#sqlname').value || 'table', enrich: $('#enrich').checked };
+  const res = await fetch('/ingest/sql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  if (!res.ok) { $('#prog').textContent = '✗ ' + (await res.json()).detail; return; }
+  await ingestStream(res, body.name);
+};
+
+// ---- tabs -------------------------------------------------------------------
+function setTab(name) {
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.id === name));
+  if (name === 'graph') resizeGraph();
+}
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => setTab(b.dataset.tab));
+
+// ---- query ------------------------------------------------------------------
+function md(s) {  // streaming-safe inline markdown; block structure is preserved by pre-wrap
+  return esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/^(#{1,6})\s+(.+)$/gm, '<b>$2</b>');
+}
+function renderSources(ev) {
+  hits = ev.hits;
+  const lv = ['', '§ section', '◆ document'];
+  $('#sources').innerHTML = (ev.entities?.length ? `<p class="mono muted" style="margin:0 0 10px">query entities → ${ev.entities.map(esc).join(', ')}</p>` : '') +
+    hits.map((h, i) => `<div class="hit" id="hit${i}">
+      <div class="top"><span class="n">[${i + 1}]</span><span class="src" title="${esc(h.source)}">${esc(h.source)}${h.heading ? ' › ' + esc(h.heading) : ''}</span>
+        ${h.level ? `<span class="lvl">${lv[h.level]}</span>` : ''}${h.arms.map(a => `<span class="arm ${a}">${a}</span>`).join('')}<span>${h.score.toFixed(2)}</span></div>
+      ${h.context ? `<div class="ctx">${esc(h.context)}</div>` : ''}
+      <div class="txt" onclick="this.classList.toggle('open')">${esc(h.text)}</div><div class="quotes"></div></div>`).join('') || '<p class="muted">nothing retrieved</p>';
+}
+function renderTiming(t, extra) {
+  const stages = ['embed', 'dense', 'bm25', 'fuse', 'graph', 'rerank'].filter(s => s in t);
+  const rows = stages.map(s => [s, t[s]]);
+  if (extra.ttft) rows.push(['→ 1st token', extra.ttft - t.total, 'llm']);
+  if (extra.total) rows.push(['generation', extra.total - extra.ttft, 'llm']);
+  const sum = rows.reduce((a, r) => a + r[1], 0); let x = 0;
+  $('#timing').innerHTML = rows.map(([n, v, c]) => { const l = 100 * x / sum, w = 100 * v / sum; x += v;
+    return `<div class="stage ${c || ''}"><span>${n}</span><div class="track"><i style="left:${l}%;width:${Math.max(w, .5)}%"></i></div><span class="v">${v.toFixed(v < 10 ? 2 : 0)} ms</span></div>`; }).join('') +
+    `<div class="kv"><span>retrieval</span><span>${t.total} ms</span>${extra.ttft ? `<span>time to first token</span><span>${extra.ttft} ms</span>` : ''}${extra.total ? `<span>end to end</span><span>${extra.total} ms</span>` : ''}
+     <span>candidate pool</span><span>${extra.pool ?? '–'}</span>${extra.usage ? `<span>tokens in / cached / out</span><span>${extra.usage.input} / ${extra.usage.cache_read} / ${extra.usage.output}</span>` : ''}</div>`;
+}
+async function ask() {
+  const question = $('#q').value.trim(); if (!question) return;
+  $('#q').value = ''; $('#empty')?.remove(); $('#send').disabled = true;
+  const thread = $('#thread');
+  thread.insertAdjacentHTML('beforeend', `<div class="msg user"><div class="bubble">${esc(question)}</div></div>`);
+  const m = document.createElement('div'); m.className = 'msg assistant'; m.innerHTML = '<div class="bubble cursor"></div><div class="meta"></div>'; thread.appendChild(m);
+  const bubble = m.querySelector('.bubble'); let block = null; const extra = {}; let timings = {};
+  thread.scrollTop = thread.scrollHeight;
+  const res = await fetch('/query', { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ question, mode: $('#mode').value, k: +$('#k').value, history, doc_ids: scoped().length ? scoped() : null }) });
+  for await (const ev of sse(res)) {
+    if (ev.t === 'rewrite') { m.querySelector('.meta').textContent = `searched as: “${ev.question}” (${ev.ms} ms)`; }
+    else if (ev.t === 'retrieval') { renderSources(ev); timings = ev.timings; extra.pool = ev.pool; renderTiming(timings, extra); setTab('sources'); }
+    else if (ev.t === 'ttft') { extra.ttft = ev.ms; renderTiming(timings, extra); }
+    else if (ev.t === 'block') { block = document.createElement('span'); block.dataset.raw = ''; bubble.appendChild(block); }
+    else if (ev.t === 'text') { if (!block) { block = document.createElement('span'); block.dataset.raw = ''; bubble.appendChild(block); } block.dataset.raw += ev.text; block.innerHTML = md(block.dataset.raw); thread.scrollTop = thread.scrollHeight; }
+    else if (ev.t === 'cite') {
+      const n = ev.doc + 1, chip = document.createElement('a'); chip.className = 'cite'; chip.textContent = n; chip.title = ev.quote;
+      chip.onclick = () => { setTab('sources'); $('#hit' + ev.doc)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+      (block || bubble).after ? bubble.appendChild(chip) : null;
+      const h = $('#hit' + ev.doc); if (h) { h.classList.add('cited'); h.querySelector('.quotes').insertAdjacentHTML('beforeend', `<div class="quote">“${esc(ev.quote.trim())}”</div>`); }
+    }
+    else if (ev.t === 'done') { extra.total = ev.total_ms; extra.usage = ev.usage; renderTiming(timings, extra);
+      history.push({ role: 'user', content: question }, { role: 'assistant', content: ev.answer });
+      const meta = m.querySelector('.meta'); meta.textContent = (meta.textContent ? meta.textContent + ' · ' : '') + `${ev.total_ms} ms · ${$('#mode').value} · ${hits.length} sources · ${ev.usage.output} tokens`; }
+    else if (ev.t === 'error') { bubble.insertAdjacentHTML('beforeend', `<span style="color:var(--danger)">${esc(ev.error)}</span>`); }
+  }
+  bubble.classList.remove('cursor'); $('#send').disabled = false; $('#q').focus();
+  if (hits.length) showGraphForHits();
+}
+$('#send').onclick = ask;
+$('#q').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } };
+$('#clear').onclick = () => { history.length = 0; $('#thread').innerHTML = ''; };
+
+// ---- knowledge graph (d3-force on canvas) -----------------------------------
+let sim, gnodes = [], glinks = [], transform = d3.zoomIdentity;
+const canvas = $('#graphc'), ctx = canvas.getContext('2d');
+function resizeGraph() { const r = canvas.parentElement.getBoundingClientRect(); canvas.width = r.width - 28; canvas.height = Math.max(420, r.height - 28); draw(); }
+function draw() {
+  ctx.save(); ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.translate(transform.x, transform.y); ctx.scale(transform.k, transform.k);
+  ctx.strokeStyle = 'rgba(139,147,161,.35)'; ctx.lineWidth = 1;
+  for (const l of glinks) { ctx.beginPath(); ctx.moveTo(l.source.x, l.source.y); ctx.lineTo(l.target.x, l.target.y); ctx.stroke(); }
+  ctx.font = '10px ui-monospace, Menlo, monospace'; ctx.textBaseline = 'middle';
+  for (const n of gnodes) {
+    const r = 3 + Math.sqrt(n.deg) * 2;
+    ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 7); ctx.fillStyle = n.hit ? '#3ddc97' : '#d58cff'; ctx.fill();
+    if (n.deg > 1 || transform.k > 1.4) { ctx.fillStyle = '#e6e9ee'; ctx.fillText(n.id, n.x + r + 3, n.y); }
+  }
+  ctx.restore();
+}
+function layout(edges, hitChunks = new Set()) {
+  const nodes = new Map(); const links = [];
+  const get = id => nodes.get(id) || nodes.set(id, { id, deg: 0, hit: false }).get(id);
+  for (const e of edges) { const s = get(e.src), t = get(e.dst); s.deg++; t.deg++; if (hitChunks.has(e.chunk_id)) s.hit = t.hit = true; links.push({ source: e.src, target: e.dst, rel: e.rel }); }
+  gnodes = [...nodes.values()]; glinks = links;
+  sim?.stop();
+  sim = d3.forceSimulation(gnodes).force('link', d3.forceLink(glinks).id(d => d.id).distance(40)).force('charge', d3.forceManyBody().strength(-80))
+    .force('center', d3.forceCenter(canvas.width / 2, canvas.height / 2)).force('collide', d3.forceCollide(10)).on('tick', draw);
+}
+async function showGraph(docId) { const edges = await (await fetch('/graph' + (docId ? '?doc_id=' + docId : ''))).json(); resizeGraph(); layout(edges); }
+async function showGraphForHits() { const edges = await (await fetch('/graph?limit=600')).json(); resizeGraph(); layout(edges, new Set(hits.map(h => h.id))); }
+d3.select(canvas).call(d3.zoom().scaleExtent([.3, 4]).on('zoom', e => { transform = e.transform; draw(); }))
+  .call(d3.drag().container(canvas).subject(e => { const [x, y] = transform.invert([e.x, e.y]); return sim?.find(x, y, 12); })
+    .on('start', e => { if (!e.active) sim.alphaTarget(.3).restart(); e.subject.fx = e.subject.x; e.subject.fy = e.subject.y; })
+    .on('drag', e => { const [x, y] = transform.invert([e.x, e.y]); e.subject.fx = x; e.subject.fy = y; })
+    .on('end', e => { if (!e.active) sim.alphaTarget(0); e.subject.fx = e.subject.fy = null; }));
+window.addEventListener('resize', resizeGraph);
+
+refresh();
+</script>
+</body>
+</html>

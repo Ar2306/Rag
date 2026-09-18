@@ -1,0 +1,18 @@
+[project]
+name = "atlas-rag"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=1.6.0",
+    "fastapi>=0.141.1",
+    "fastembed>=0.8.0",
+    "lancedb>=0.39.0",
+    "numpy>=2.5.3",
+    "pypdf>=6.19.0",
+    "python-dotenv>=1.2.3",
+    "python-multipart>=0.0.32",
+    "sqlalchemy>=2.0.54",
+    "uvicorn[standard]>=0.53.0",
+]
