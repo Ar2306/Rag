@@ -1,7 +1,7 @@
 [project]
 name = "atlas-rag"
 version = "0.1.0"
-description = "Add your description here"
+description = "Local-first hybrid RAG: BM25 + dense + entity graph + rerank, with Claude citations"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -10,9 +10,10 @@ dependencies = [
     "fastembed>=0.8.0",
     "lancedb>=0.39.0",
     "numpy>=2.5.3",
-    "pypdf>=6.19.0",
+    "pymupdf4llm>=1.28.2",
     "python-dotenv>=1.2.3",
     "python-multipart>=0.0.32",
+    "rapidocr-onnxruntime>=1.4.4",
     "sqlalchemy>=2.0.54",
     "uvicorn[standard]>=0.53.0",
 ]

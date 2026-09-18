@@ -80,7 +80,11 @@ def norm_entity(name: str) -> str:
 
 
 def _sql_list(values) -> str:
-    return ", ".join("'" + v.replace("'", "''") + "'" for v in values)
+    return ", ".join(_sql_str(v) for v in values)
+
+
+def _sql_str(v: str) -> str:
+    return "'" + v.replace("'", "''") + "'"
 
 
 class Store:
@@ -104,7 +108,9 @@ class Store:
 
     def add(self, rows: list[dict], edges: list[dict]) -> None:
         if rows:
-            vectors = self.embedder.embed([r["embed_text"] for r in rows], batch_size=64, parallel=0)
+            # In-process ONNX threads. `parallel=0` would fork one model-loading
+            # worker per core for any doc with >= 64 chunks and OOM small machines.
+            vectors = self.embedder.embed([r["embed_text"] for r in rows], batch_size=64)
             for r, v in zip(rows, vectors):
                 r["vector"] = np.asarray(v, dtype=np.float32)
             self.table.add(pa.Table.from_pylist(rows, schema=SCHEMA))
@@ -113,8 +119,8 @@ class Store:
         self._refresh()
 
     def delete_doc(self, doc_id: str) -> None:
-        self.table.delete(f"doc_id = '{doc_id}'")
-        self.graph.delete(f"doc_id = '{doc_id}'")
+        self.table.delete(f"doc_id = {_sql_str(doc_id)}")
+        self.graph.delete(f"doc_id = {_sql_str(doc_id)}")
         self._refresh()
 
     def _refresh(self) -> None:
@@ -162,7 +168,7 @@ class Store:
         return sorted(agg.values(), key=lambda a: a["source"])
 
     def tree(self, doc_id: str) -> list[dict]:
-        rows = self.table.search().where(f"doc_id = '{doc_id}'").select(COLS).limit(1_000_000).to_list()
+        rows = self.table.search().where(f"doc_id = {_sql_str(doc_id)}").select(COLS).limit(1_000_000).to_list()
         return sorted(rows, key=lambda r: (-r["level"], r["ordinal"]))
 
     def graph_edges(self, doc_id: str | None = None, limit: int = 400) -> list[dict]:
@@ -170,7 +176,7 @@ class Store:
             return []
         q = self.graph.search().where("rel != ''")
         if doc_id:
-            q = q.where(f"doc_id = '{doc_id}'")
+            q = q.where(f"doc_id = {_sql_str(doc_id)}")
         return q.select(["src", "rel", "dst", "chunk_id"]).limit(limit).to_list()
 
     def _chunks_with_entities(self, names: set[str], exclude: set[str], limit: int) -> list[str]:

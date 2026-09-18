@@ -48,7 +48,15 @@ Docker: `docker build -t atlas . && docker run -p 8000:8000 -v atlas-data:/data 
 
 ## Ingest
 
-Three sources, one pipeline: **files** (pdf · md · txt · code, drag-and-drop), **URLs** (HTML pages become markdown with headings preserved; PDF links are fetched as PDFs), and **databases** below.
+Three sources, one pipeline: **files** (drag-and-drop), **URLs** (HTML pages become markdown with headings preserved; PDF links are fetched as PDFs), and **databases** below.
+
+| File type | Loader |
+|---|---|
+| `.pdf` | PyMuPDF via `pymupdf4llm`: multi-column reading order, headings inferred from font sizes. Pages without a text layer are OCR'd with RapidOCR (ONNX, CPU). |
+| `.docx` | stdlib zip + XML; `Heading N` styles become markdown headings |
+| `.ipynb` | markdown cells verbatim, code cells fenced, outputs dropped |
+| `.md` `.txt` `.rst` `.html` | as-is (markdown headings drive the hierarchy) |
+| `.py` `.js` `.ts` `.json` `.yaml` `.csv` | fenced as code, so `# comment` lines are not mistaken for headings |
 
 ## Ingest from any database
 

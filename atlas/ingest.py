@@ -23,14 +23,16 @@ from html.parser import HTMLParser
 from urllib.request import Request, urlopen
 
 import anthropic
-from pypdf import PdfReader
 
 from atlas import config as C
 from atlas.store import Store, norm_entity
 
 HEADING = re.compile(r"^(#{1,6})\s+(.*)$", re.M)
+FENCE = re.compile(r"^```.*?^```[ \t]*$", re.M | re.S)  # headings inside code fences are not headings
 SENTENCE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(\[])")
-TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".rst", ".py", ".js", ".ts", ".json", ".yaml", ".yml", ".html", ".csv"}
+TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".rst", ".html"}
+CODE_SUFFIXES = {".py", ".js", ".ts", ".json", ".yaml", ".yml", ".csv"}  # fenced, so `# comment` lines stay code
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 UPLOADS = C.DATA / "uploads"
 
 
@@ -48,12 +50,98 @@ class Chunk:
 # ---- load ------------------------------------------------------------------
 
 
+_ocr = None
+
+
+def _ocr_page(page) -> str:
+    """OCR one rasterised page with RapidOCR (ONNX, ~80 MB, no torch). Lazy so
+    text-layer PDFs never pay for it."""
+    global _ocr
+    if _ocr is None:
+        from rapidocr_onnxruntime import RapidOCR
+
+        _ocr = RapidOCR()
+    import numpy as np
+
+    pix = page.get_pixmap(dpi=200)
+    img = np.frombuffer(pix.samples, np.uint8).reshape(pix.height, pix.width, pix.n)[:, :, :3]
+    result, _ = _ocr(img)
+    if not result:
+        return ""
+    # Reading order: top-to-bottom, then left-to-right, by box top-left corner.
+    lines = sorted(result, key=lambda r: (round(r[0][0][1] / 20), r[0][0][0]))
+    return "\n".join(r[1] for r in lines)
+
+
+OCR_MIN_CHARS = 40  # a text-layer page with fewer chars than this is treated as an image
+
+
+def load_pdf(path: Path) -> str:
+    """PyMuPDF via pymupdf4llm: correct multi-column reading order and headings
+    inferred from font sizes (emitted as markdown `#`), so PDFs get the same
+    hierarchy as markdown. Pages without a text layer fall back to OCR."""
+    import pymupdf
+    import pymupdf4llm
+
+    doc = pymupdf.open(str(path))
+    # use_ocr=False: pymupdf4llm's own RapidOCR hook targets an older RapidOCR API
+    # and crashes on 1.4+; we OCR image-only pages ourselves below.
+    pages = pymupdf4llm.to_markdown(doc, page_chunks=True, table_strategy=None, show_progress=False, use_ocr=False)
+    out = []
+    for i, p in enumerate(pages):
+        text = p["text"].strip()
+        if len(text) < OCR_MIN_CHARS:
+            try:
+                text = _ocr_page(doc[i]).strip()
+            except Exception:  # OCR is best-effort: missing package, odd image, etc.
+                pass
+        if text:
+            out.append(text)
+    text = "\n\n".join(out)
+    text = re.sub(r"</?mark>", "", text)  # pymupdf4llm highlight markup
+    return re.sub(r"^(#{1,6}) \*\*(.+?)\*\*\s*$", r"\1 \2", text, flags=re.M)  # bold headings → plain
+
+
+def load_ipynb(path: Path) -> str:
+    """Markdown cells as-is, code cells fenced; outputs are dropped."""
+    out = []
+    for cell in json.loads(path.read_text(errors="replace")).get("cells", []):
+        src = cell.get("source", "")
+        src = (src if isinstance(src, str) else "".join(src)).strip()
+        if src:
+            out.append(src if cell.get("cell_type") == "markdown" else f"```\n{src}\n```")
+    return "\n\n".join(out)
+
+
+def load_docx(path: Path) -> str:
+    """Stdlib .docx reader: one line per paragraph, Heading N styles become `#` headings."""
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    with zipfile.ZipFile(path) as z:
+        root = ET.fromstring(z.read("word/document.xml"))
+    out = []
+    for p in root.iter(f"{W}p"):
+        text = "".join(t.text or "" for t in p.iter(f"{W}t")).strip()
+        if not text:
+            continue
+        style = p.find(f"{W}pPr/{W}pStyle")
+        m = re.fullmatch(r"Heading(\d)", style.get(f"{W}val", "") if style is not None else "")
+        out.append(f"{'#' * int(m.group(1))} {text}" if m else text)
+    return "\n\n".join(out)
+
+
 def load(path: Path) -> str:
-    if path.suffix.lower() == ".pdf":
-        pages = [p.extract_text() or "" for p in PdfReader(str(path)).pages]
-        # PDF extractors emit one line per visual line; rejoin into paragraphs.
-        return "\n\n".join(re.sub(r"(?<!\n)\n(?!\n)", " ", p).strip() for p in pages)
-    if path.suffix.lower() in TEXT_SUFFIXES or not path.suffix:
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        return load_pdf(path)
+    if suffix == ".ipynb":
+        return load_ipynb(path)
+    if suffix == ".docx":
+        return load_docx(path)
+    if suffix in CODE_SUFFIXES:
+        return f"```\n{path.read_text(errors='replace')}\n```"
+    if suffix in TEXT_SUFFIXES or not suffix:
         return path.read_text(errors="replace")
     raise ValueError(f"unsupported file type: {path.suffix}")
 
@@ -154,7 +242,9 @@ def chunk(doc: str, tokenizer, budget: int = C.CHUNK_TOKENS, overlap: int = C.CH
     sections: list[tuple[str, str, int]] = []  # (breadcrumb, body, start_offset)
     crumbs: list[tuple[int, str]] = []
     pos = 0
-    for m in [*HEADING.finditer(doc), None]:
+    fences = [(m.start(), m.end()) for m in FENCE.finditer(doc)]
+    headings = [m for m in HEADING.finditer(doc) if not any(a <= m.start() < b for a, b in fences)]
+    for m in [*headings, None]:
         end = m.start() if m else len(doc)
         body = doc[pos:end]
         if body.strip():
@@ -184,10 +274,11 @@ def chunk(doc: str, tokenizer, budget: int = C.CHUNK_TOKENS, overlap: int = C.CH
                 s_off = so + len(sent)
                 if ntok(sent) <= budget:
                     units.append((sent, base + p_off + so))
-                else:  # pathological run-on: hard split by tokens
-                    ids = tokenizer.encode(sent, add_special_tokens=False).ids
-                    for i in range(0, len(ids), budget):
-                        units.append((tokenizer.decode(ids[i : i + budget]), base + p_off + so))
+                else:  # pathological run-on: hard split on token boundaries, slicing the *original* text
+                    enc = tokenizer.encode(sent, add_special_tokens=False)  # decode() would lowercase/normalise
+                    for i in range(0, len(enc.ids), budget):
+                        a, b = enc.offsets[i][0], enc.offsets[min(i + budget, len(enc.ids)) - 1][1]
+                        units.append((sent[a:b], base + p_off + so + a))
 
         buf: list[tuple[str, int]] = []
         size = 0

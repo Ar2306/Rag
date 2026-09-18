@@ -21,7 +21,14 @@ Dense retrieval embeds text with bge-small. BM25 handles exact terms like ERR_QU
 
 ## Storage
 LanceDB stores vectors and the full-text index in one table. Zebra-striped rows are not a thing.
-"""
+
+```python
+# not a heading: comments inside fences stay code
+x = 1
+```
+
+## Runon
+""" + "AlphaBeta GammaDelta " * 200  # no sentence breaks: forces the token-boundary hard split
 
 
 def test_rrf():
@@ -42,7 +49,9 @@ def test_chunker(store):
     assert [c.ordinal for c in chunks] == list(range(len(chunks)))
     assert all(DOC[c.start :].startswith(c.text[:20]) for c in chunks), "start offsets wrong"
     groups = group_sections(chunks)
-    assert [h for h, _ in groups] == ["Atlas", "Atlas › Retrieval", "Atlas › Storage"]
+    assert [h for h, _ in groups] == ["Atlas", "Atlas › Retrieval", "Atlas › Storage", "Atlas › Runon"]
+    runon = [c for c in chunks if c.heading == "Atlas › Runon"]
+    assert len(runon) >= 2 and all(c.text.startswith("AlphaBeta") for c in runon), "hard split must keep original text"
 
 
 def test_retrieve(store):
@@ -52,7 +61,8 @@ def test_retrieve(store):
          "heading": c.heading, "context": "", "text": c.text, "embed_text": f"{c.heading}\n{c.text}"}
         for c in chunks
     ]
-    edges = [{"src": "lancedb", "rel": "stores", "dst": "vectors", "chunk_id": rows[-1]["id"], "doc_id": "d"}]
+    storage = next(r for r in rows if "LanceDB" in r["text"])
+    edges = [{"src": "lancedb", "rel": "stores", "dst": "vectors", "chunk_id": storage["id"], "doc_id": "d"}]
     store.add(rows, edges)
     assert store.count() == len(rows)
     assert Store().count() == len(rows), "re-opening an existing DB must not fail"

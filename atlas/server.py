@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -54,8 +55,9 @@ async def index():
 @app.get("/health")
 async def health(req: Request):
     s: Store = req.app.state.store
+    nodes, docs = await asyncio.to_thread(lambda: (s.count(), len(s.docs())))
     return {
-        "nodes": s.count(), "docs": len(s.docs()), "api_key": C.HAS_API_KEY,
+        "nodes": nodes, "docs": docs, "api_key": C.HAS_API_KEY,
         "models": {"embed": C.EMBED_MODEL, "rerank": C.RERANK_MODEL, "answer": C.ANSWER_MODEL, "enrich": C.CONTEXT_MODEL},
         "modes": MODES,
     }
@@ -106,7 +108,8 @@ async def ingest_files(req: Request, files: list[UploadFile] = File(...), enrich
     paths = []
     for f in files:
         p = UPLOADS / Path(f.filename or "upload").name
-        p.write_bytes(await f.read())
+        with p.open("wb") as out:  # stream to disk; never hold a whole PDF in memory
+            await asyncio.to_thread(shutil.copyfileobj, f.file, out)
         paths.append(p)
     return sse(_ingest_paths(req, paths, enrich))
 
@@ -148,7 +151,7 @@ async def ingest_url(req: Request, body: UrlIngest):
 class Query(BaseModel):
     question: str
     mode: str = "full"
-    k: int = C.TOP_K
+    k: int = Field(C.TOP_K, ge=1, le=C.RERANK_POOL)
     history: list[dict] = []  # [{"role": "user"|"assistant", "content": str}]
     doc_ids: list[str] | None = None  # scope retrieval to these documents
 
