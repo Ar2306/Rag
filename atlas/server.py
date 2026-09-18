@@ -57,8 +57,8 @@ async def health(req: Request):
     s: Store = req.app.state.store
     nodes, docs = await asyncio.to_thread(lambda: (s.count(), len(s.docs())))
     return {
-        "nodes": nodes, "docs": docs, "api_key": C.HAS_API_KEY,
-        "models": {"embed": C.EMBED_MODEL, "rerank": C.RERANK_MODEL, "answer": C.ANSWER_MODEL, "enrich": C.CONTEXT_MODEL},
+        "nodes": nodes, "docs": docs, "api_key": C.HAS_LLM, "provider": C.LLM_PROVIDER,
+        "models": {"embed": C.EMBED_MODEL, "rerank": C.RERANK_MODEL, "answer": C.LLM_MODEL, "enrich": C.LLM_FAST_MODEL},
         "modes": MODES,
     }
 
@@ -165,7 +165,7 @@ async def query(req: Request, q: Query):
     async def gen():
         t0 = time.perf_counter()
         history = q.history[-6:]
-        question = await standalone_question(q.question, history) if history and C.HAS_API_KEY else q.question
+        question = await standalone_question(q.question, history) if history and C.HAS_LLM else q.question
         if question != q.question:
             yield {"t": "rewrite", "question": question, "ms": round((time.perf_counter() - t0) * 1000, 1)}
         hits, timings, meta = await asyncio.to_thread(store.retrieve, question, q.k, q.mode, C.CANDIDATES, q.doc_ids)
@@ -173,8 +173,8 @@ async def query(req: Request, q: Query):
         if not hits:
             yield {"t": "error", "error": "No documents indexed yet — upload something first."}
             return
-        if not C.HAS_API_KEY:
-            yield {"t": "error", "error": "ANTHROPIC_API_KEY is not set: retrieval works, answer generation is disabled."}
+        if not C.HAS_LLM:
+            yield {"t": "error", "error": "No LLM configured (set LLM_PROVIDER and LLM_API_KEY in .env): retrieval works, answer generation is disabled."}
             return
         first = None
         async for ev in stream_answer(q.question, hits, history):

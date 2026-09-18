@@ -5,11 +5,11 @@ description = "Local-first hybrid RAG: BM25 + dense + entity graph + rerank, wit
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "anthropic>=1.6.0",
     "fastapi>=0.141.1",
     "fastembed>=0.8.0",
     "lancedb>=0.39.0",
     "numpy>=2.5.3",
+    "openai>=3.16.0",
     "pymupdf4llm>=1.28.2",
     "python-dotenv>=1.2.3",
     "python-multipart>=0.0.32",

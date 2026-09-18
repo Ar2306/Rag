@@ -2,11 +2,12 @@
 hierarchy (section & document summaries) → index.
 
 Chunk budgets are measured with the embedding model's own tokenizer, so nothing
-is silently truncated at embed time. With an API key, one Haiku call per chunk
-against a prompt-cached copy of the document returns the contextual-retrieval
-sentence (Anthropic 2024) *and* the entity/relation triples for the knowledge
-graph. Section and document summaries (RAPTOR, Sarthi et al. 2024) are indexed
-as level-1/2 nodes so global questions retrieve a summary, not a random leaf.
+is silently truncated at embed time. With an LLM configured, one fast-model call
+per chunk (JSON mode, with a window of the surrounding document) returns the
+contextual-retrieval sentence (Anthropic 2024) *and* the entity/relation triples
+for the knowledge graph. Section and document summaries (RAPTOR, Sarthi et al.
+2024) are indexed as level-1/2 nodes so global questions retrieve a summary,
+not a random leaf.
 """
 
 from __future__ import annotations
@@ -22,9 +23,8 @@ from typing import AsyncIterator
 from html.parser import HTMLParser
 from urllib.request import Request, urlopen
 
-import anthropic
-
 from atlas import config as C
+from atlas.llm import complete, parse_json
 from atlas.store import Store, norm_entity
 
 HEADING = re.compile(r"^(#{1,6})\s+(.*)$", re.M)
@@ -306,74 +306,49 @@ def chunk(doc: str, tokenizer, budget: int = C.CHUNK_TOKENS, overlap: int = C.CH
 
 ENRICH_PROMPT = (
     "Here is the chunk we want to situate within the whole document:\n<chunk>\n{chunk}\n</chunk>\n\n"
-    "1. `context`: 1-2 sentences situating this chunk within the overall document, for the purpose "
-    "of improving search retrieval of the chunk. Name the specific entities, sections or topics it belongs to.\n"
-    "2. `entities`: the salient named entities and key concepts in the chunk (people, organisations, "
+    "Return a JSON object with exactly these keys:\n"
+    '"context": 1-2 sentences situating this chunk within the overall document, for the purpose of '
+    "improving search retrieval of the chunk. Name the specific entities, sections or topics it belongs to.\n"
+    '"entities": array of the salient named entities and key concepts in the chunk (people, organisations, '
     "products, places, technical terms). Canonical short names, no duplicates, at most 12.\n"
-    "3. `relations`: explicit factual relations between those entities stated in the chunk, as "
-    "(subject, predicate, object) with a short verb-phrase predicate. At most 10; empty if none."
+    '"relations": array of {{"subject", "predicate", "object"}} objects for explicit factual relations '
+    "between those entities stated in the chunk, with a short verb-phrase predicate. At most 10; empty if none."
 )
-ENRICH_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "context": {"type": "string"},
-        "entities": {"type": "array", "items": {"type": "string"}},
-        "relations": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {"subject": {"type": "string"}, "predicate": {"type": "string"}, "object": {"type": "string"}},
-                "required": ["subject", "predicate", "object"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    "required": ["context", "entities", "relations"],
-    "additionalProperties": False,
-}
-DOC_WINDOW = 300_000  # chars (~75k tokens) — keeps huge docs inside Haiku's context
 
 
 async def enrich(doc: str, chunks: list[Chunk], progress=None) -> None:
-    """Fills chunk.context / entities / relations in place. Prompt-caches the
-    document prefix: the first request per window is awaited alone so it *writes*
-    the cache; the rest fan out concurrently and *read* it at 10% of input price."""
-    client = anthropic.AsyncAnthropic()
+    """Fills chunk.context / entities / relations in place. Each call sees a window
+    of the document around the chunk (the whole document when it fits)."""
     sem = asyncio.Semaphore(C.CONTEXT_CONCURRENCY)
     done = 0
-
-    def win_start(ch: Chunk) -> int:
-        return 0 if len(doc) <= DOC_WINDOW else max(0, ch.start - DOC_WINDOW // 2)
 
     async def one(ch: Chunk) -> None:
         nonlocal done
         async with sem:
-            s = win_start(ch)
-            resp = await client.messages.create(
-                model=C.CONTEXT_MODEL,
-                max_tokens=800,
-                system=[{"type": "text", "text": f"<document>\n{doc[s : s + DOC_WINDOW]}\n</document>", "cache_control": {"type": "ephemeral"}}],
-                messages=[{"role": "user", "content": ENRICH_PROMPT.format(chunk=ch.text)}],
-                output_config={"format": {"type": "json_schema", "schema": ENRICH_SCHEMA}},
+            s = 0 if len(doc) <= C.DOC_WINDOW else max(0, ch.start - C.DOC_WINDOW // 2)
+            raw, usage = await complete(
+                C.LLM_FAST_MODEL,
+                [
+                    {"role": "system", "content": f"<document>\n{doc[s : s + C.DOC_WINDOW]}\n</document>"},
+                    {"role": "user", "content": ENRICH_PROMPT.format(chunk=ch.text)},
+                ],
+                json_mode=True,
             )
-            data = json.loads(next(b.text for b in resp.content if b.type == "text"))
-            ch.context = data["context"].strip()
-            ch.entities = sorted({norm_entity(e) for e in data["entities"] if norm_entity(e)})
-            ch.relations = [
-                (norm_entity(r["subject"]), r["predicate"].strip().lower(), norm_entity(r["object"]))
-                for r in data["relations"]
-                if norm_entity(r["subject"]) and norm_entity(r["object"])
-            ]
+            data = parse_json(raw)
+            ch.context = str(data.get("context") or "").strip()
+            ch.entities = sorted({norm_entity(str(e)) for e in data.get("entities") or [] if norm_entity(str(e))})
+            ch.relations = []
+            for r in data.get("relations") or []:
+                if not isinstance(r, dict):
+                    continue
+                subj, obj = norm_entity(str(r.get("subject") or "")), norm_entity(str(r.get("object") or ""))
+                if subj and obj:
+                    ch.relations.append((subj, str(r.get("predicate") or "").strip().lower(), obj))
             done += 1
             if progress:
-                await progress("enriching", done, len(chunks), resp.usage)
+                await progress("enriching", done, len(chunks), usage)
 
-    groups: dict[int, list[Chunk]] = {}
-    for ch in chunks:
-        groups.setdefault(win_start(ch), []).append(ch)
-    for group in groups.values():
-        await one(group[0])  # warm the cache for this window exactly once
-        await asyncio.gather(*(one(ch) for ch in group[1:]))
+    await asyncio.gather(*(one(ch) for ch in chunks))
 
 
 # ---- hierarchy: section + document summaries -------------------------------
@@ -396,22 +371,17 @@ def group_sections(chunks: list[Chunk]) -> list[tuple[str, list[Chunk]]]:
 
 
 async def summarize(groups: list[tuple[str, list[Chunk]]], source: str, progress=None) -> tuple[list[str], str]:
-    client = anthropic.AsyncAnthropic()
     sem = asyncio.Semaphore(C.CONTEXT_CONCURRENCY)
     done = 0
 
     async def one(what: str, body: str) -> str:
         nonlocal done
         async with sem:
-            resp = await client.messages.create(
-                model=C.CONTEXT_MODEL,
-                max_tokens=600,
-                messages=[{"role": "user", "content": SUMMARY_PROMPT.format(what=what, body=body)}],
-            )
+            out, usage = await complete(C.LLM_FAST_MODEL, [{"role": "user", "content": SUMMARY_PROMPT.format(what=what, body=body)}])
             done += 1
             if progress:
-                await progress("summarizing", done, len(groups) + 1, resp.usage)
-            return next((b.text for b in resp.content if b.type == "text"), "").strip()
+                await progress("summarizing", done, len(groups) + 1, usage)
+            return out
 
     sections = await asyncio.gather(
         *(one(f"section '{h or source}'", "\n\n".join(c.text for c in cs)) for h, cs in groups)
@@ -439,18 +409,16 @@ async def ingest(path: Path, store: Store, enrich_: bool = True) -> AsyncIterato
     groups = group_sections(chunks)
     yield {"stage": "chunked", "chunks": len(chunks), "sections": len(groups)}
 
-    usage = {"input": 0, "cache_write": 0, "cache_read": 0, "output": 0}
-    enrich_ = enrich_ and C.HAS_API_KEY and len(chunks) >= C.CONTEXT_MIN_CHUNKS and len(doc) >= C.CONTEXT_MIN_DOC_CHARS
+    usage = {"input": 0, "cache_read": 0, "output": 0}
+    enrich_ = enrich_ and C.HAS_LLM and len(chunks) >= C.CONTEXT_MIN_CHUNKS and len(doc) >= C.CONTEXT_MIN_DOC_CHARS
     section_summaries: list[str] = []
     doc_summary = ""
     if enrich_:
         queue: asyncio.Queue = asyncio.Queue()
 
         async def progress(stage, done, total, u):
-            usage["input"] += u.input_tokens
-            usage["cache_write"] += u.cache_creation_input_tokens or 0
-            usage["cache_read"] += u.cache_read_input_tokens or 0
-            usage["output"] += u.output_tokens
+            for key in usage:
+                usage[key] += u[key]
             await queue.put({"stage": stage, "done": done, "total": total})
 
         async def work():

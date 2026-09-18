@@ -3,22 +3,22 @@
   uv run python -m atlas.evaluate build 40   # synthesise 40 gold (question → chunk) pairs
   uv run python -m atlas.evaluate run        # score every retrieval mode
 
-Gold questions are written by Haiku from randomly sampled leaf chunks, with the
-instruction that the question must be answerable from that chunk alone. Metrics
-are standard IR: Recall@k, MRR@10, nDCG@10, plus p50 latency per mode.
+Gold questions are written by the fast model from randomly sampled leaf chunks,
+with the instruction that the question must be answerable from that chunk alone.
+Metrics are standard IR: Recall@k, MRR@10, nDCG@10, plus p50 latency per mode.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import random
 import statistics
 import sys
 
-import anthropic
-
 from atlas import config as C
+from atlas.llm import complete
 from atlas.store import MODES, Store
 
 GOLD = C.DATA / "gold.json"
@@ -34,14 +34,9 @@ def build(store: Store, n: int) -> None:
     rows = store.table.search().where("level = 0").select(["id", "text"]).limit(1_000_000).to_list()
     rows = [r for r in rows if len(r["text"]) > 300]  # tiny chunks make degenerate questions
     sample = random.sample(rows, min(n, len(rows)))
-    client = anthropic.Anthropic()
     gold = []
     for i, r in enumerate(sample, 1):
-        resp = client.messages.create(
-            model=C.CONTEXT_MODEL, max_tokens=120,
-            messages=[{"role": "user", "content": QUESTION_PROMPT.format(text=r["text"])}],
-        )
-        q = next(b.text for b in resp.content if b.type == "text").strip()
+        q, _ = asyncio.run(complete(C.LLM_FAST_MODEL, [{"role": "user", "content": QUESTION_PROMPT.format(text=r["text"])}]))
         gold.append({"question": q, "chunk_id": r["id"]})
         print(f"[{i}/{len(sample)}] {q}")
     GOLD.write_text(json.dumps(gold, indent=1))
@@ -72,6 +67,8 @@ def run(store: Store, k: int = 10) -> None:
 
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "run"
+    if cmd == "build" and not C.HAS_LLM:
+        raise SystemExit("set LLM_PROVIDER / LLM_API_KEY in .env to generate gold questions")
     s = Store()
     if cmd == "build":
         build(s, int(sys.argv[2]) if len(sys.argv) > 2 else 40)

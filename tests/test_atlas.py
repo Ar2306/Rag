@@ -9,6 +9,7 @@ from pathlib import Path
 os.environ["ATLAS_DATA"] = tempfile.mkdtemp()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from atlas.answer import parse_cites  # noqa: E402
 from atlas.ingest import chunk, group_sections  # noqa: E402
 from atlas.store import Store, rrf  # noqa: E402
 
@@ -29,6 +30,13 @@ x = 1
 
 ## Runon
 """ + "AlphaBeta GammaDelta " * 200  # no sentence breaks: forces the token-boundary hard split
+
+
+def test_cites():
+    text = "A [1] b [2, 3] c [12] d [4"  # trailing marker is still streaming
+    found, end = parse_cites(text, 0)
+    assert found == [0, 1, 2, 11] and text[:end].endswith("[12]")
+    assert parse_cites("no markers, [not one]", 0) == ([], 0)
 
 
 def test_rrf():
@@ -89,6 +97,7 @@ def test_retrieve(store):
 
 
 if __name__ == "__main__":
+    test_cites()
     test_rrf()
     s = Store()
     test_chunker(s)

@@ -151,8 +151,8 @@
     <div id="thread">
       <div class="empty" id="empty">
         <h2>Ask your documents.</h2>
-        <p>Upload files or connect a database on the left. Every answer streams with exact citations,<br>and the right panel shows what was retrieved, why, and how long each stage took.</p>
-        <p class="muted mono">bge-small · BM25 · RRF k=60 · entity graph · MiniLM cross-encoder · claude</p>
+        <p>Upload files or connect a database on the left. Every answer streams with numbered citations,<br>and the right panel shows what was retrieved, why, and how long each stage took.</p>
+        <p class="muted mono">bge-small · BM25 · RRF k=60 · entity graph · MiniLM cross-encoder · any OpenAI-compatible LLM</p>
       </div>
     </div>
     <div class="composer">
@@ -212,7 +212,7 @@ async function* sse(res) {
 async function refresh() {
   const h = await (await fetch('/health')).json();
   $('#status').innerHTML = `<span class="pill">${h.nodes} nodes</span><span class="pill">${h.docs} docs</span>
-    <span class="pill ${h.api_key ? 'ok' : 'bad'}">${h.api_key ? h.models.answer : 'no API key'}</span>`;
+    <span class="pill ${h.api_key ? 'ok' : 'bad'}">${h.api_key ? h.provider + ' · ' + h.models.answer : 'no LLM configured'}</span>`;
   const docs = await (await fetch('/documents')).json();
   $('#ndocs').textContent = docs.length ? `(${docs.length})` : '';
   $('#docs').innerHTML = docs.map(d => `<div class="doc" data-id="${d.doc_id}" title="${esc(d.source)}">
@@ -282,7 +282,8 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => setTab(
 
 // ---- query ------------------------------------------------------------------
 function md(s) {  // streaming-safe inline markdown; block structure is preserved by pre-wrap
-  return esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/^(#{1,6})\s+(.+)$/gm, '<b>$2</b>');
+  return esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/^(#{1,6})\s+(.+)$/gm, '<b>$2</b>')
+    .replace(/\[(\d+(?:\s*,\s*\d+)*)\]/g, (_, ns) => ns.split(/\s*,\s*/).map(n => `<a class="cite" data-doc="${n - 1}">${n}</a>`).join(''));  // [n] → chip
 }
 function renderSources(ev) {
   hits = ev.hits;
@@ -321,12 +322,7 @@ async function ask() {
     else if (ev.t === 'ttft') { extra.ttft = ev.ms; renderTiming(timings, extra); }
     else if (ev.t === 'block') { block = document.createElement('span'); block.dataset.raw = ''; bubble.appendChild(block); }
     else if (ev.t === 'text') { if (!block) { block = document.createElement('span'); block.dataset.raw = ''; bubble.appendChild(block); } block.dataset.raw += ev.text; block.innerHTML = md(block.dataset.raw); thread.scrollTop = thread.scrollHeight; }
-    else if (ev.t === 'cite') {
-      const n = ev.doc + 1, chip = document.createElement('a'); chip.className = 'cite'; chip.textContent = n; chip.title = ev.quote;
-      chip.onclick = () => { setTab('sources'); $('#hit' + ev.doc)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
-      (block || bubble).after ? bubble.appendChild(chip) : null;
-      const h = $('#hit' + ev.doc); if (h) { h.classList.add('cited'); h.querySelector('.quotes').insertAdjacentHTML('beforeend', `<div class="quote">“${esc(ev.quote.trim())}”</div>`); }
-    }
+    else if (ev.t === 'cite') { $('#hit' + ev.doc)?.classList.add('cited'); }  // inline [n] chips are rendered by md()
     else if (ev.t === 'done') { extra.total = ev.total_ms; extra.usage = ev.usage; renderTiming(timings, extra);
       history.push({ role: 'user', content: question }, { role: 'assistant', content: ev.answer });
       const meta = m.querySelector('.meta'); meta.textContent = (meta.textContent ? meta.textContent + ' · ' : '') + `${ev.total_ms} ms · ${$('#mode').value} · ${hits.length} sources · ${ev.usage.output} tokens`; }
@@ -374,6 +370,10 @@ d3.select(canvas).call(d3.zoom().scaleExtent([.3, 4]).on('zoom', e => { transfor
 window.addEventListener('resize', resizeGraph);
 
 refresh();
+document.addEventListener('click', e => {  // [n] chip → scroll to source n
+  const a = e.target.closest('a.cite'); if (!a || a.dataset.doc === undefined) return;
+  setTab('sources'); $('#hit' + a.dataset.doc)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
 </script>
 </body>
 </html>
